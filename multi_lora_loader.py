@@ -1,12 +1,22 @@
 import os
 import json
 import folder_paths
+from aiohttp import web
+from server import PromptServer
 import comfy.lora
 import comfy.lora_convert
 import comfy.sd
 import comfy.utils
 from comfy_execution.graph_utils import ExecutionBlocker
 from .data_utils import update_node_in_workflow
+
+
+@PromptServer.instance.routes.get("/multi_lora_loader/loras")
+async def get_available_loras(request):
+    """Return the current LoRA library instead of the initial node snapshot."""
+    return web.json_response({
+        "loras": ["None"] + folder_paths.get_filename_list("loras")
+    })
 
 
 class MultiLoRALoader:

@@ -1,4 +1,5 @@
 import { app } from "../../scripts/app.js";
+import { api } from "../../scripts/api.js";
 
 // ═══════════════════════════════════════════════════════════════
 //  MultiLoRALoader — HTML DOM Widget Frontend
@@ -565,6 +566,33 @@ app.registerExtension({
             return loraPath.replace(/\.[^.]+$/, "");
         };
 
+        /**
+         * Replaces the node-definition snapshot with the current backend
+         * LoRA list. If refresh fails, retain the last known list.
+         *
+         * @param {object} nodeData
+         * @returns {Promise<string[]>}
+         */
+        const refreshAvailableLoras = async (nodeData) => {
+            try {
+                const response = await api.fetchApi("/multi_lora_loader/loras", {
+                    cache: "no-store",
+                });
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+
+                const result = await response.json();
+                if (Array.isArray(result.loras)) {
+                    nodeData.input.hidden.available_loras[0] = result.loras;
+                }
+            } catch (err) {
+                console.warn("[MultiLoRA] Unable to refresh LoRA list:", err);
+            }
+
+            return nodeData.input.hidden.available_loras[0];
+        };
+
         // ─────────────────────────────────────────────
         //  Drag-and-Drop Helpers
         // ─────────────────────────────────────────────
@@ -896,9 +924,9 @@ app.registerExtension({
                 }
             }
 
-            nameEl.addEventListener("click", (e) => {
+            nameEl.addEventListener("click", async (e) => {
                 e.stopPropagation();
-                const loraList = nodeData.input.hidden.available_loras[0];
+                const loraList = await refreshAvailableLoras(nodeData);
                 new LiteGraph.ContextMenu(loraList, {
                     event: e,
                     title: "Choose a lora",
