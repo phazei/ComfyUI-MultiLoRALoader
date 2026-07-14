@@ -627,7 +627,7 @@ app.registerExtension({
                     // Skip if this LoRA is already in the list
                     if (data.some(row => row.lora === loraPath)) continue;
                     data.push({
-                        on: true, lora: loraPath,
+                        on: false, lora: loraPath,
                         str: 1.0, clip: 1.0, vid: 1.0, v2a: 1.0,
                         aud: 1.0, a2v: 1.0, other: 1.0
                     });
