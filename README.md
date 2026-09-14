@@ -78,7 +78,7 @@ A powerful multi-LoRA management node for ComfyUI with optional LTX2 layer-speci
 | **+ Add LoRA** | Click | Add a new empty row |
 | **Drop zone** | Drop files | Drop LoRA files to add by filename match (files must already be in your loras directory) |
 
-> **Note on drag-and-drop:** No files are copied — this is a shortcut for selecting LoRAs from the menu. Dropped files are matched by filename (case-insensitive) against LoRAs already in your ComfyUI `models/loras` directory. If a file isn't found, an alert lists the unmatched filenames.
+> **Note on drag-and-drop:** No files are copied — this is a shortcut for selecting LoRAs from the menu. Dropped files are matched by filename (case-insensitive) against LoRAs already in your ComfyUI `models/loras` directory. If a file isn't found, an alert lists the unmatched filenames. For a LoRA you only just copied into that directory, press `R` first so ComfyUI picks it up.
 
 ### Inputs and Outputs
 
@@ -266,7 +266,7 @@ This node was previously called **Power LTX LoRA Loader Extra**. If you load an 
 
 ### LoRA doesn't appear in the menu
 - Ensure the LoRA file is in your ComfyUI `models/loras` directory
-- Refresh the page or restart ComfyUI
+- Press `R` (**Refresh Node Definitions**) to re-read the LoRA folder — no browser reload needed
 
 ### Disabled LoRAs don't affect the model
 - Disabled LoRAs (toggle off) are kept in your configuration but not applied

@@ -18,6 +18,20 @@ import { app } from "../../scripts/app.js";
 //  applied uniformly via ComfyUI's standard loader.
 // ═══════════════════════════════════════════════════════════════
 
+/**
+ * The LoRA filename list, shared by every node instance.
+ *
+ * ComfyUI sends this list once, inside the node definition, which each
+ * node instance would otherwise capture in a closure at registration
+ * time.  Refreshing node definitions builds a *new* node class, so nodes
+ * already on the canvas would keep showing the old list until the page
+ * was reloaded.  Keeping it at module scope lets refreshComboInNode()
+ * below update the list for every live node.
+ *
+ * @type {string[]}
+ */
+let availableLoras = ["None"];
+
 // ─────────────────────────────────────────────
 //  CSS Injection (once per page load)
 // ─────────────────────────────────────────────
@@ -332,6 +346,8 @@ app.registerExtension({
     async beforeRegisterNodeDef(nodeType, nodeData) {
         if (nodeData.name !== "MultiLoRALoader") return;
 
+        availableLoras = nodeData.input.hidden.available_loras[0];
+
         // ─────────────────────────────────────────────
         //  Constants
         // ─────────────────────────────────────────────
@@ -577,7 +593,7 @@ app.registerExtension({
          * given filename (case-insensitive).
          *
          * @param {string}   filename - Basename from a dropped File object
-         * @param {string[]} loraList - available_loras from nodeData
+         * @param {string[]} loraList - Currently available LoRA paths
          * @returns {string[]} Matching LoRA paths (may be empty)
          */
         const matchLorasByFilename = (filename, loraList) => {
@@ -613,7 +629,7 @@ app.registerExtension({
             );
             if (droppedFiles.length === 0) return false;
 
-            const loraList = nodeData.input.hidden.available_loras[0];
+            const loraList = availableLoras;
             const data = JSON.parse(node.properties.lora_data || "[]");
             const notFound = [];
 
@@ -793,7 +809,7 @@ app.registerExtension({
             rowEl.className = "mll-row";
 
             // Apply state classes
-            const loraList = nodeData.input.hidden.available_loras[0];
+            const loraList = availableLoras;
             if (row.lora === "None") {
                 rowEl.classList.add("mll-none-lora");
             } else if (!row.on) {
@@ -898,7 +914,7 @@ app.registerExtension({
 
             nameEl.addEventListener("click", (e) => {
                 e.stopPropagation();
-                const loraList = nodeData.input.hidden.available_loras[0];
+                const loraList = availableLoras;
                 new LiteGraph.ContextMenu(loraList, {
                     event: e,
                     title: "Choose a lora",
@@ -1339,6 +1355,31 @@ app.registerExtension({
                 renderHeader(this, this._mllHeader, this._mllNodeData, this._mllRowsContainer);
                 renderRows(this, this._mllRowsContainer, this._mllNodeData);
                 requestAnimationFrame(() => resizeNode(this));
+            }
+        };
+
+        // ─────────────────────────────────────────────
+        //  Refresh — pick up newly added LoRA files
+        // ─────────────────────────────────────────────
+
+        /**
+         * Called by ComfyUI on every live node when node definitions are
+         * refreshed ("R" hotkey / Refresh Node Definitions menu item).
+         *
+         * The list is taken straight from the supplied defs rather than
+         * from re-registration: reloadNodeDefs() doesn't await
+         * registerNodeDef(), so beforeRegisterNodeDef can land after this
+         * runs.  Rows are re-rendered so "missing LoRA" styling reflects
+         * what's actually on disk now.
+         *
+         * @param {object} defs - Fresh node definitions keyed by node name
+         */
+        nodeType.prototype.refreshComboInNode = function (defs) {
+            const list = defs?.MultiLoRALoader?.input?.hidden?.available_loras?.[0];
+            if (list) availableLoras = list;
+
+            if (this._mllRowsContainer && this._mllNodeData) {
+                renderRows(this, this._mllRowsContainer, this._mllNodeData);
             }
         };
 

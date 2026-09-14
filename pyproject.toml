@@ -1,7 +1,7 @@
 [project]
 name = "ComfyUI-MultiLoRALoader"
 description = "Multi-LoRA loader with optional LTX layer-specific strength control, drag-and-drop file import, and a companion cycle node for batch-testing LoRA training checkpoints at multiple strengths. Outputs modified model plus JSON metadata of applied LoRAs."
-version = "2.4.0"
+version = "2.4.1"
 keywords = [
     "ComfyUI",
     "lora",
@@ -19,7 +19,7 @@ keywords = [
 license = {file = "LICENSE"}
 
 [project.urls]
-Repository = "https://github.com/phazei/ComfyUI-MultiLoraLoader"
+Repository = "https://github.com/phazei/ComfyUI-MultiLoRALoader"
 #  Used by Comfy Registry https://comfyregistry.org
 
 [tool.comfy]
