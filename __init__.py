@@ -1,4 +1,7 @@
 from .multi_lora_loader import MultiLoRALoader, PowerLTXLoraLoaderExtra, MultiLoRA_ParseJSON, MultiLoRA_Cycle
+from .lora_rank import register_routes
+
+register_routes()
 
 NODE_CLASS_MAPPINGS = {
     "MultiLoRALoader": MultiLoRALoader,

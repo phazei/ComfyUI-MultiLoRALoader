@@ -1,4 +1,5 @@
 import { app } from "../../scripts/app.js";
+import { api } from "../../scripts/api.js";
 
 // ═══════════════════════════════════════════════════════════════
 //  MultiLoRALoader — HTML DOM Widget Frontend
@@ -31,6 +32,98 @@ import { app } from "../../scripts/app.js";
  * @type {string[]}
  */
 let availableLoras = ["None"];
+
+// ─────────────────────────────────────────────
+//  LoRA Rank Lookup (batched + cached)
+// ─────────────────────────────────────────────
+//
+//  Ranks come from POST /multi_lora_loader/ranks, which reads only the
+//  safetensors header and keeps a persistent server-side cache, so a
+//  file is only read again if it changes.  Here, each name is fetched
+//  at most once per page session: switching workflows renders straight
+//  from _rankResults, and any new names requested in the same tick are
+//  sent together in one request.
+
+/** name -> rank info object (or null when unknown) */
+const _rankResults = new Map();
+/** name -> Promise<info|null>, for lookups in flight */
+const _rankPending = new Map();
+/** names waiting for the next batched request -> resolve fn */
+let _rankQueue = new Map();
+let _rankFlushScheduled = false;
+/** Last defs object seen by refreshComboInNode (one clear per refresh) */
+let _lastRefreshDefs = null;
+
+const flushRankQueue = async () => {
+    _rankFlushScheduled = false;
+    const queue = _rankQueue;
+    _rankQueue = new Map();
+    const names = [...queue.keys()];
+    let data = {};
+    let ok = false;
+    try {
+        const resp = await api.fetchApi("/multi_lora_loader/ranks", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ names }),
+        });
+        if (resp.ok) {
+            data = await resp.json();
+            ok = true;
+        }
+    } catch (err) {
+        console.warn("[MultiLoRA] Rank lookup failed:", err);
+    }
+    for (const [name, resolve] of queue) {
+        const info = data[name] ?? null;
+        // On failure don't cache, so a later render can retry.
+        if (ok) _rankResults.set(name, info);
+        _rankPending.delete(name);
+        resolve(info);
+    }
+};
+
+/**
+ * Returns a Promise for a LoRA's rank info, batching uncached lookups.
+ * @param {string} name
+ * @returns {Promise<{rank:number,min:number,max:number,alpha:?number}|null>}
+ */
+const fetchLoraRank = (name) => {
+    if (_rankResults.has(name)) return Promise.resolve(_rankResults.get(name));
+    if (_rankPending.has(name)) return _rankPending.get(name);
+    const p = new Promise(resolve => _rankQueue.set(name, resolve));
+    _rankPending.set(name, p);
+    if (!_rankFlushScheduled) {
+        _rankFlushScheduled = true;
+        setTimeout(flushRankQueue, 0);
+    }
+    return p;
+};
+
+/**
+ * Fills a rank label element from rank info.
+ * @param {HTMLElement} el
+ * @param {object|null} info
+ */
+const applyRankLabel = (el, info) => {
+    if (info && !info.rank && info.kind) {
+        el.textContent = `(${info.kind})`;
+        el.title = `${info.kind} (no single rank)`;
+        return;
+    }
+    if (!info || !info.rank) {
+        el.textContent = "";
+        el.title = "";
+        return;
+    }
+    const mixed = info.min !== info.max;
+    el.textContent = mixed ? `(r${info.min}-${info.max})` : `(r${info.rank})`;
+    let title = mixed
+        ? `LoRA rank varies by layer: ${info.min}–${info.max} (most common ${info.rank})`
+        : `LoRA rank ${info.rank}`;
+    if (info.alpha != null) title += `, alpha ${info.alpha}`;
+    el.title = title;
+};
 
 // ─────────────────────────────────────────────
 //  CSS Injection (once per page load)
@@ -311,6 +404,16 @@ function injectStyles() {
     outline: 2px solid rgba(100, 150, 255, 0.7);
     outline-offset: -2px;
     background: rgba(100, 150, 255, 0.08);
+}
+
+/* ── Rank Label ── */
+
+.mll-rank {
+    color: #999;
+    font-size: 10px;
+    margin-left: 4px;
+    flex: 0 0 auto;
+    white-space: nowrap;
 }
 
 /* ── Info Badge ── */
@@ -887,6 +990,21 @@ app.registerExtension({
                 }
             };
             if (row.lora && row.lora !== "None") {
+                // ── Rank label, left of the info badge ──
+                // Filled synchronously when cached (no blink on rebuild),
+                // otherwise via one batched request.  Skipped for missing
+                // files.
+                if (loraList.includes(row.lora)) {
+                    const rankEl = document.createElement("span");
+                    rankEl.className = "mll-rank";
+                    if (_rankResults.has(row.lora)) {
+                        applyRankLabel(rankEl, _rankResults.get(row.lora));
+                    } else {
+                        fetchLoraRank(row.lora).then(info => applyRankLabel(rankEl, info));
+                    }
+                    nameEl.appendChild(rankEl);
+                }
+
                 const badge = document.createElement("span");
                 badge.className = "mll-info-badge";
                 badge.textContent = "\u24D8";  // circled i
@@ -1377,6 +1495,14 @@ app.registerExtension({
         nodeType.prototype.refreshComboInNode = function (defs) {
             const list = defs?.MultiLoRALoader?.input?.hidden?.available_loras?.[0];
             if (list) availableLoras = list;
+
+            // Forget session-cached ranks once per refresh so retrained /
+            // replaced files are re-checked (the server re-reads only files
+            // whose size or mtime changed).
+            if (defs && defs !== _lastRefreshDefs) {
+                _lastRefreshDefs = defs;
+                _rankResults.clear();
+            }
 
             if (this._mllRowsContainer && this._mllNodeData) {
                 renderRows(this, this._mllRowsContainer, this._mllNodeData);

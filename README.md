@@ -22,6 +22,7 @@ A powerful multi-LoRA management node for ComfyUI with optional LTX2 layer-speci
   - **Other**: Remaining network components
 - **Intuitive UI**: Drag-and-drop row reordering, toggle enable/disable, click-to-edit or drag-to-slide values
 - **Drag-and-Drop File Import**: Drop LoRA files onto the node to quickly add them — matches by filename against your existing LoRA library
+- **LoRA Rank Display**: Each LoRA shows its rank (e.g. `(r16)`) next to its name, read from the file header and cached, so you can spot high-rank LoRAs that may not play well with a given model. See [LoRA Rank](#lora-rank)
 - **Missing LoRA Detection**: LoRAs that no longer exist on disk are shown with red strikethrough text on session load, so you can spot moved or deleted files at a glance
 - **rgthree LoRA Info Integration**: Right-click any LoRA name to open the rgthree LoRA info dialog (requires [rgthree-comfy](https://github.com/rgthree/rgthree-comfy)). LoRAs with fetched info display a circled info badge next to their name (green for Civitai data, gray for local info). Fetching new info from Civitai in the dialog updates the badge immediately on close
 - **Optional Model/CLIP Input**: Use as a standalone LoRA manager even without model or CLIP connected
@@ -71,6 +72,7 @@ A powerful multi-LoRA management node for ComfyUI with optional LTX2 layer-speci
 | **Dot** (Toggle) | Click | Enable/disable the LoRA |
 | **LoRA Name** | Left-click | Open LoRA selection menu |
 | **LoRA Name** | Right-click | Show LoRA Info (requires rgthree-comfy) |
+| **Rank** `(r16)` | Hover | LoRA rank (hover for details, incl. alpha when stored) |
 | **Info badge** | — | Indicates fetched LoRA info (green = Civitai, gray = local) |
 | **~~Strikethrough~~** | — | LoRA file not found on disk (hover for tooltip) |
 | **STR / CLIP / Vid / V2A / Aud / A2V / Other** | Drag or click | Adjust strengths (CLIP shown when the CLIP checkbox is enabled) |
@@ -105,6 +107,23 @@ This node integrates with [rgthree-comfy](https://github.com/rgthree/rgthree-com
 Info is cached after first fetch, so toggling, reordering, or adding LoRAs won't cause badge flicker. Closing the info dialog after fetching new data from Civitai automatically refreshes the badge.
 
 If rgthree-comfy is not installed, the info features are simply not shown.
+
+### LoRA Rank
+
+Each LoRA row shows the LoRA's rank just left of the info badge. Some models respond poorly to high-rank LoRAs, so this helps when choosing which ones to stack.
+
+| Label | Meaning |
+|-------|---------|
+| `(r32)` | Rank 32 across all layers |
+| `(r8-32)` | Rank varies by layer (hover for the most common value) |
+| `(LoKr)` | Unfactorized LoKr — has no single rank |
+| *(none)* | Rank couldn't be determined (non-safetensors file or unrecognised format) |
+
+Hovering the label shows the rank, plus the network alpha when the trainer stored it (`ss_network_alpha`).
+
+The rank is read from the safetensors **header only**. No weights are loaded, so lookups are fast even for large files. Supported formats include kohya, diffusers/PEFT, LoCon, LoHa, and factorized LoKr.
+
+**Caching:** results are saved to `ComfyUI/user/multi_lora_loader/rank_cache.json`, keyed by each file's size and modified time. A file is only read again if it changes. In the browser, each LoRA is looked up at most once per page session, so switching workflows sends no new requests for LoRAs already seen. Pressing `R` (**Refresh Node Definitions**) clears the browser's copy, so a retrained checkpoint saved under the same filename is picked up.
 
 ### Example Output
 
@@ -275,6 +294,11 @@ This node was previously called **Power LTX LoRA Loader Extra**. If you load an 
 ### Can't shrink the node after expanding it
 - Drag the node's resize handle to make it narrower
 - The node enforces a minimum width of 500px
+
+### Rank label missing or out of date
+- Only `.safetensors` files are supported; `.ckpt`/`.pt`/`.bin` show no rank
+- After replacing a LoRA file under the same name, press `R` to re-check it
+- Deleting `ComfyUI/user/multi_lora_loader/rank_cache.json` forces every file to be re-read
 
 ### LoRA Info / right-click menu not working
 - Requires [rgthree-comfy](https://github.com/rgthree/rgthree-comfy) to be installed
