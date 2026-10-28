@@ -34,6 +34,52 @@ import { api } from "../../scripts/api.js";
 let availableLoras = ["None"];
 
 // ─────────────────────────────────────────────
+//  User Preferences (per browser, all nodes)
+// ─────────────────────────────────────────────
+
+const PREFS_KEY = "multi_lora_loader.settings";
+const PREF_DEFAULTS = { step: 0.05, default_strength: 0.8, hide_folders: false, json_help_open: false };
+/** Shift always steps by this, whatever the coarse step is */
+const FINE_STEP = 0.01;
+/** Scrub: pixels of horizontal travel per step, after a small dead zone */
+const SCRUB_PIXELS_PER_STEP = 4;
+const SCRUB_DEAD_ZONE = 2;
+
+const loadPrefs = () => {
+    try {
+        const stored = JSON.parse(window.localStorage?.getItem(PREFS_KEY) || "{}");
+        return { ...PREF_DEFAULTS, ...(stored && typeof stored === "object" ? stored : {}) };
+    } catch {
+        return { ...PREF_DEFAULTS };
+    }
+};
+
+let prefs = loadPrefs();
+
+const savePrefs = () => {
+    try {
+        window.localStorage?.setItem(PREFS_KEY, JSON.stringify(prefs));
+    } catch {
+        // Storage blocked: the preference still applies for this session.
+    }
+};
+
+/** Coarse step, guarded against bad stored values */
+const getStep = () => {
+    const s = Number(prefs.step);
+    return Number.isFinite(s) && s > 0 ? s : PREF_DEFAULTS.step;
+};
+
+/** Model / CLIP strength a newly added LoRA row starts at */
+const getDefaultStrength = () => {
+    const s = Number(prefs.default_strength);
+    return Number.isFinite(s) ? s : PREF_DEFAULTS.default_strength;
+};
+
+/** Every live MultiLoRALoader node, so preference changes re-render them all */
+const _liveNodes = new Set();
+
+// ─────────────────────────────────────────────
 //  LoRA Rank Lookup (batched + cached)
 // ─────────────────────────────────────────────
 //
@@ -197,31 +243,221 @@ function injectStyles() {
     color: #fff;
 }
 
-/* ── LTX Toggle ── */
+/* ── Settings Popup (cog) ── */
 
-.mll-ltx-toggle {
-    flex: 0 0 auto;
+.mll-pop {
+    position: fixed;
+    z-index: 10000;
+    width: 460px;
+    max-width: calc(100vw - 16px);
+    background: #1c1f23;
+    border: 1px solid #3a4047;
+    border-radius: 7px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+    font: 12px system-ui, sans-serif;
+    color: #d7dde2;
+    display: flex;
+    flex-direction: column;
+}
+.mll-pop * { box-sizing: border-box; }
+
+.mll-pop-head {
     display: flex;
     align-items: center;
-    gap: 3px;
-    margin-left: 6px;
+    gap: 7px;
+    padding: 9px 10px;
+    border-bottom: 1px solid #2c3238;
+    color: #4CAF50;
+    font-weight: 600;
+}
+.mll-pop-close {
+    margin-left: auto;
+    width: 22px;
+    height: 22px;
+    border: none;
+    border-radius: 5px;
+    background: transparent;
+    color: #9ba2aa;
     cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+}
+.mll-pop-close:hover { background: #2c3238; color: #fff; }
+
+.mll-pop-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px 10px 10px;
+    max-height: 75vh;
+    overflow-y: auto;
+}
+.mll-pop-body > * { flex-shrink: 0; }
+
+.mll-pop-section {
+    padding: 10px 0 3px;
+    color: #9ba2aa;
     font-size: 10px;
-    font-weight: bold;
-    color: #ddd;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
 }
 
-.mll-ltx-toggle input[type="checkbox"] {
+.mll-pop-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 32px;
+    padding: 3px 0;
+}
+.mll-pop-label { flex: 1 1 auto; min-width: 0; }
+.mll-pop-hint {
+    display: block;
+    color: #9ba2aa;
+    font-size: 10.5px;
+    line-height: 1.35;
+    margin-top: 1px;
+}
+
+.mll-pop-toggle {
+    width: 30px;
+    height: 16px;
+    border-radius: 8px;
+    border: none;
+    background: #3a4047;
+    cursor: pointer;
+    position: relative;
+    flex: none;
+    padding: 0;
+}
+.mll-pop-toggle::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
     width: 12px;
     height: 12px;
-    margin: 0;
-    cursor: pointer;
-    accent-color: #4CAF50;
+    border-radius: 50%;
+    background: #9ba2aa;
+    transition: left 0.12s;
+}
+.mll-pop-toggle.on { background: #4CAF50; }
+.mll-pop-toggle.on::after { left: 16px; background: #fff; }
+
+.mll-pop-input {
+    width: 72px;
+    height: 24px;
+    flex: none;
+    padding: 0 4px 0 8px;
+    border: 1px solid #3a4047;
+    border-radius: 5px;
+    background: #23272c;
+    color: inherit;
+    font: inherit;
+    text-align: center;
+    outline: none;
+}
+.mll-pop-input:focus { border-color: #4CAF50; }
+
+.mll-pop-text {
+    color: #b9c2c9;
+    line-height: 1.45;
+    padding: 2px 0 6px;
 }
 
-.mll-ltx-toggle.mll-ltx-active {
-    color: #4CAF50;
+.mll-pop-help {
+    margin: 0 0 8px;
+    border: 1px solid #2c3238;
+    border-radius: 5px;
+    background: #202428;
 }
+.mll-pop-help > summary {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    color: #b9c2c9;
+    font-size: 11px;
+    cursor: pointer;
+    user-select: none;
+}
+.mll-pop-help > summary::-webkit-details-marker { display: none; }
+.mll-pop-help > summary::before {
+    content: "\\25B8";
+    color: #4CAF50;
+    font-size: 10px;
+    transition: transform 0.12s;
+}
+.mll-pop-help[open] > summary::before { transform: rotate(90deg); }
+.mll-pop-help > summary:hover { color: #fff; }
+.mll-pop-help[open] > summary { border-bottom: 1px solid #2c3238; }
+.mll-pop-help-body { padding: 6px 8px 0; }
+
+.mll-pop-keys {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 3px 10px;
+    padding: 0 0 8px;
+    font-size: 11px;
+}
+.mll-pop-keys .term {
+    color: #4CAF50;
+    font-family: ui-monospace, Consolas, monospace;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.mll-pop-keys .detail { color: #9ba2aa; line-height: 1.35; }
+
+.mll-pop-json {
+    width: 100%;
+    min-height: 90px;
+    max-height: 45vh;
+    resize: vertical;
+    padding: 7px 8px;
+    border: 1px solid #3a4047;
+    border-radius: 5px;
+    background: #15181b;
+    color: #d7dde2;
+    font: 11px/1.45 ui-monospace, Consolas, monospace;
+    white-space: pre;
+    overflow: auto;
+    outline: none;
+    tab-size: 2;
+}
+.mll-pop-json:focus { border-color: #4CAF50; }
+.mll-pop-json.invalid { border-color: #f44336; }
+
+.mll-pop-status {
+    min-height: 16px;
+    padding-top: 4px;
+    font-size: 11px;
+    color: #9ba2aa;
+}
+.mll-pop-status.error { color: #ff8a80; }
+.mll-pop-status.ok { color: #4CAF50; }
+
+.mll-pop-foot {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 10px;
+    border-top: 1px solid #2c3238;
+}
+.mll-pop-btn {
+    height: 24px;
+    border: 1px solid #3a4047;
+    border-radius: 5px;
+    background: #23272c;
+    color: #d7dde2;
+    cursor: pointer;
+    padding: 0 12px;
+    font: inherit;
+}
+.mll-pop-btn:hover { border-color: #4CAF50; }
+.mll-pop-btn.primary { border-color: #4CAF50; color: #4CAF50; }
+.mll-pop-btn.primary:hover { background: #4CAF50; color: #0b2410; }
+.mll-pop-foot .spacer { flex: 1; }
 
 /* ── Row Container ── */
 
@@ -266,8 +502,52 @@ function injectStyles() {
     opacity: 0.35;
 }
 
-.mll-row.mll-none-lora {
-    opacity: 0.4;
+/* ── Empty Slot ── */
+
+.mll-name.mll-empty-slot {
+    margin: 0 4px;
+    height: 18px;
+    line-height: 16px;
+    border: 1px dashed rgba(255, 255, 255, 0.22);
+    border-radius: 3px;
+    color: #888;
+    font-style: italic;
+}
+.mll-name.mll-empty-slot bdi {
+    direction: ltr;
+}
+.mll-name.mll-empty-slot:hover {
+    border-color: #4CAF50;
+    color: #ddd;
+}
+.mll-row.mll-none-lora .mll-toggle-dot {
+    opacity: 0.5;
+}
+
+/* ── Divider ── */
+
+.mll-row.mll-divider {
+    background: transparent !important;
+    gap: 8px;
+}
+.mll-divider-label {
+    flex: 0 1 auto;
+    min-width: 0;
+    padding-left: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #4CAF50;
+    font-weight: bold;
+    font-size: 11px;
+    letter-spacing: 0.3px;
+    cursor: default;
+}
+.mll-divider-line {
+    flex: 1 1 0;
+    height: 1px;
+    margin-left: 4px;
+    background: linear-gradient(to right, rgba(76, 175, 80, 0.6), rgba(76, 175, 80, 0.08));
 }
 
 .mll-row.mll-missing-lora .mll-name bdi {
@@ -376,12 +656,17 @@ function injectStyles() {
     color: #ff6659;
 }
 
-/* ── Add Button ── */
+/* ── Add Buttons ── */
+
+.mll-add-bar {
+    display: flex;
+    gap: 4px;
+    margin: 4px 4px 2px;
+}
 
 .mll-add-btn {
-    display: block;
-    width: calc(100% - 8px);
-    margin: 4px auto 2px;
+    flex: 1 1 auto;
+    margin: 0;
     padding: 5px 0;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.18);
@@ -396,6 +681,11 @@ function injectStyles() {
 .mll-add-btn:hover {
     background: rgba(255, 255, 255, 0.15);
     color: #fff;
+}
+.mll-add-btn.mll-add-divider {
+    flex: 0 0 auto;
+    padding: 5px 14px;
+    color: #4CAF50;
 }
 
 /* ── Drag-and-Drop Overlay ── */
@@ -470,12 +760,28 @@ app.registerExtension({
             { key: "other", label: "Other" },
         ];
 
-        /** Creates a default empty LoRA row */
-        const makeEmptyRow = () => ({
-            on: true, lora: "None",
-            str: 1.0, clip: 1.0,
-            vid: 1.0, v2a: 1.0, aud: 1.0, a2v: 1.0, other: 1.0
-        });
+        /**
+         * Creates a new LoRA row.  Model / CLIP strength start at the
+         * "Default strength" preference; the LTX layer values are
+         * multipliers on top of that, so they start at 1.0.
+         */
+        /**
+         * A divider is a "None" row carrying a `label`.  Everything that
+         * applies or cycles LoRAs already skips "None" rows, so dividers
+         * need no backend support.  An empty label draws a plain line.
+         * @param {object} row
+         * @returns {boolean}
+         */
+        const isDividerRow = (row) => row.lora === "None" && typeof row.label === "string";
+
+        const makeEmptyRow = (lora = "None", on = true) => {
+            const s = getDefaultStrength();
+            return {
+                on, lora,
+                str: s, clip: s,
+                vid: 1.0, v2a: 1.0, aud: 1.0, a2v: 1.0, other: 1.0
+            };
+        };
 
         // ─────────────────────────────────────────────
         //  LTX Mode Helpers
@@ -608,13 +914,14 @@ app.registerExtension({
          * @param {*}        value    - Initial value
          * @param {Function} callback - Called with the entered value
          * @param {Event}    event    - Positioning event (needs clientX/clientY)
+         * @returns {HTMLElement|null} The dialog element
          */
         const showPrompt = (title, value, callback, event) => {
             const canvas = app.canvas;
-            if (!canvas || typeof canvas.prompt !== "function") return;
+            if (!canvas || typeof canvas.prompt !== "function") return null;
 
             const dialog = canvas.prompt(title, value, callback, event);
-            if (!dialog) return;
+            if (!dialog) return null;
 
             // Add outside-click close for Nodes 2.0 compatibility
             setTimeout(() => {
@@ -631,6 +938,7 @@ app.registerExtension({
                     origClose();
                 };
             }, 60);
+            return dialog;
         };
 
         // ─────────────────────────────────────────────
@@ -649,6 +957,21 @@ app.registerExtension({
             if (!widget) return;
 
             const allRows = JSON.parse(node.properties.lora_data || "[]");
+
+            // With CLIP mode off the backend patches CLIP at "str", so keep
+            // "clip" mirroring it.  Otherwise a stale hidden value would
+            // resurface when the CLIP column is switched on.
+            if (!getClipMode(node)) {
+                let changed = false;
+                for (const row of allRows) {
+                    if (row.str !== undefined && row.clip !== row.str) {
+                        row.clip = row.str;
+                        changed = true;
+                    }
+                }
+                if (changed) node.properties.lora_data = JSON.stringify(allRows);
+            }
+
             const selectedRows = allRows.filter(row => row.lora !== "None");
             widget.value = JSON.stringify(selectedRows);
         };
@@ -681,7 +1004,9 @@ app.registerExtension({
          */
         const formatLoraName = (loraPath) => {
             if (!loraPath || loraPath === "None") return "None";
-            return loraPath.replace(/\.[^.]+$/, "");
+            let name = loraPath.replace(/\.[^.]+$/, "");
+            if (prefs.hide_folders) name = name.split(/[/\\]/).pop();
+            return name;
         };
 
         // ─────────────────────────────────────────────
@@ -745,11 +1070,7 @@ app.registerExtension({
                 for (const loraPath of matches) {
                     // Skip if this LoRA is already in the list
                     if (data.some(row => row.lora === loraPath)) continue;
-                    data.push({
-                        on: false, lora: loraPath,
-                        str: 1.0, clip: 1.0, vid: 1.0, v2a: 1.0,
-                        aud: 1.0, a2v: 1.0, other: 1.0
-                    });
+                    data.push(makeEmptyRow(loraPath, false));
                 }
             }
 
@@ -775,9 +1096,387 @@ app.registerExtension({
             return true;
         };
 
+        // ─────────────────────────────────────────────
+        //  Settings Popup (cog)
+        // ─────────────────────────────────────────────
+
+        const NUM_KEYS = ["str", "clip", "vid", "v2a", "aud", "a2v", "other"];
+
         /**
-         * Rebuilds the header content (column labels, LTX toggle, cog button).
-         * Called on initial render and when LTX mode changes.
+         * Validates parsed config JSON and fills in missing values.
+         * Throws an Error with a user-facing message when invalid.
+         *
+         * @param {*} parsed
+         * @returns {object[]}
+         */
+        const sanitizeConfig = (parsed) => {
+            if (!Array.isArray(parsed)) {
+                throw new Error("The config must be a list: [ {...}, {...} ]");
+            }
+            return parsed.map((row, i) => {
+                if (!row || typeof row !== "object" || Array.isArray(row)) {
+                    throw new Error(`Row ${i + 1} is not an object { ... }`);
+                }
+                if (row.lora !== undefined && typeof row.lora !== "string") {
+                    throw new Error(`Row ${i + 1}: "lora" must be a string`);
+                }
+                const out = {
+                    on:   row.on !== undefined ? !!row.on : true,
+                    lora: row.lora || "None",
+                };
+                for (const key of NUM_KEYS) {
+                    if (row[key] === undefined || row[key] === null) {
+                        out[key] = 1.0;
+                        continue;
+                    }
+                    const n = parseFloat(row[key]);
+                    if (isNaN(n)) {
+                        throw new Error(`Row ${i + 1}: "${key}" is not a number`);
+                    }
+                    out[key] = n;
+                }
+                if (row.label !== undefined && row.label !== null) {
+                    if (out.lora !== "None") {
+                        throw new Error(`Row ${i + 1}: a "label" row is a divider, so its "lora" must be "None"`);
+                    }
+                    out.label = String(row.label);
+                }
+                return out;
+            });
+        };
+
+        /**
+         * Pretty-prints rows one per line, so long stacks stay readable
+         * and line-oriented edits (copy/delete a row) are easy.
+         *
+         * @param {object[]} rows
+         * @returns {string}
+         */
+        const formatConfig = (rows) => {
+            if (!rows.length) return "[]";
+            return "[\n" + rows.map(r => "  " + JSON.stringify(r)).join(",\n") + "\n]";
+        };
+
+        /** The open popup, if any: { element, abort } */
+        let _activePopup = null;
+
+        const closeConfigPopup = () => {
+            if (!_activePopup) return;
+            _activePopup.abort.abort();
+            _activePopup.element.remove();
+            _activePopup = null;
+        };
+
+        const el = (tag, className, text) => {
+            const e = document.createElement(tag);
+            if (className) e.className = className;
+            if (text !== undefined) e.textContent = text;
+            return e;
+        };
+
+        /**
+         * Opens the settings popup: mode toggles plus the config JSON editor.
+         *
+         * @param {LGraphNode}  node
+         * @param {HTMLElement}  anchorEl      - Element to position next to
+         * @param {HTMLElement}  headerEl
+         * @param {object}       nodeData
+         * @param {HTMLElement}  rowsContainer
+         */
+        const openConfigPopup = (node, anchorEl, headerEl, nodeData, rowsContainer) => {
+            closeConfigPopup();
+
+            const pop = el("div", "mll-pop");
+
+            // ── Head ──
+            const head = el("div", "mll-pop-head");
+            const close = el("button", "mll-pop-close", "\u00D7");
+            close.type = "button";
+            close.title = "Close (Esc)";
+            close.addEventListener("click", closeConfigPopup);
+            head.append(el("span", "", "\u2699"), el("span", "", "Multi LoRA Loader settings"), close);
+
+            const body = el("div", "mll-pop-body");
+
+            // Filled in once the JSON box below exists.
+            let textarea = null;
+            let appliedText = "";
+            let refreshJson = () => {};
+
+            // ── Mode toggles ──
+            body.append(el("div", "mll-pop-section", "This node \u2014 strength columns"));
+
+            const addToggle = (label, hint, get, set) => {
+                const row = el("div", "mll-pop-row");
+                const labelBox = el("div", "mll-pop-label", label);
+                labelBox.append(el("span", "mll-pop-hint", hint));
+                const toggle = el("button", "mll-pop-toggle" + (get(node) ? " on" : ""));
+                toggle.type = "button";
+                toggle.addEventListener("click", () => {
+                    const next = !toggle.classList.contains("on");
+                    toggle.classList.toggle("on", next);
+                    set(node, next);
+                    renderHeader(node, headerEl, nodeData, rowsContainer);
+                    renderRows(node, rowsContainer, nodeData);
+                    resizeNode(node);
+                    // Show any CLIP values the sync just linked to STR,
+                    // unless the user has unapplied edits in the box.
+                    if (textarea.value === appliedText) refreshJson();
+                });
+                row.append(labelBox, toggle);
+                body.append(row);
+            };
+
+            addToggle(
+                "Separate CLIP strength",
+                "Adds a CLIP column so each LoRA can patch the text encoder at its "
+                    + "own strength. Off: STR is used for both model and CLIP, "
+                    + "so switching it on starts each CLIP at its STR.",
+                getClipMode, setClipMode,
+            );
+            addToggle(
+                "LTX per-layer strengths",
+                "For LTX-2 audio/video models. Adds Vid, V2A, Aud, A2V and Other "
+                    + "columns to scale each layer group separately. CLIP is "
+                    + "passed through unchanged in this mode.",
+                getLtxMode, setLtxMode,
+            );
+
+            // ── Preferences (all nodes, this browser) ──
+            body.append(el("div", "mll-pop-section", "Preferences \u2014 all Multi LoRA nodes"));
+
+            const rerenderAll = () => {
+                for (const n of _liveNodes) {
+                    if (n._mllRowsContainer && n._mllNodeData) {
+                        renderRows(n, n._mllRowsContainer, n._mllNodeData);
+                    }
+                }
+            };
+
+            /**
+             * A number preference row.  `accept` returns the value to store
+             * (rounded to 0.01) or null to reject; `get` reads it back.
+             */
+            const addNumberPref = (label, hint, key, get, { min, max, step, accept }) => {
+                const row = el("div", "mll-pop-row");
+                const labelBox = el("div", "mll-pop-label", label);
+                labelBox.append(el("span", "mll-pop-hint", hint));
+                const input = el("input", "mll-pop-input");
+                input.type = "number";
+                input.min = String(min);
+                input.max = String(max);
+                input.step = String(step);
+                input.value = get().toFixed(2);
+                const commitValue = () => {
+                    const v = Math.round(parseFloat(input.value) * 100) / 100;
+                    if (Number.isFinite(v) && accept(v)) {
+                        prefs[key] = Math.min(Math.max(v, min), max);
+                        savePrefs();
+                    }
+                    input.value = get().toFixed(2);
+                };
+                input.addEventListener("change", commitValue);
+                input.addEventListener("keydown", (e) => {
+                    e.stopPropagation();
+                    if (e.key === "Enter") {
+                        e.preventDefault();
+                        commitValue();
+                    }
+                });
+                row.append(labelBox, input);
+                body.append(row);
+            };
+
+            addNumberPref(
+                "Default strength",
+                "Strength a newly added or dropped LoRA starts at.",
+                "default_strength", getDefaultStrength,
+                { min: -10, max: 10, step: 0.05, accept: () => true },
+            );
+            addNumberPref(
+                "Strength step",
+                "Scrub and arrow-key step. Shift always steps by 0.01.",
+                "step", getStep,
+                { min: 0.01, max: 1, step: 0.01, accept: (v) => v > 0 },
+            );
+            {
+                const row = el("div", "mll-pop-row");
+                const labelBox = el("div", "mll-pop-label", "Hide folder names");
+                labelBox.append(el("span", "mll-pop-hint",
+                    "Rows show just the file name; the full path stays in the "
+                    + "tooltip and the picker keeps its folders."));
+                const toggle = el("button", "mll-pop-toggle" + (prefs.hide_folders ? " on" : ""));
+                toggle.type = "button";
+                toggle.addEventListener("click", () => {
+                    prefs.hide_folders = !prefs.hide_folders;
+                    toggle.classList.toggle("on", prefs.hide_folders);
+                    savePrefs();
+                    rerenderAll();
+                });
+                row.append(labelBox, toggle);
+                body.append(row);
+            }
+
+            // ── Config JSON ──
+            body.append(el("div", "mll-pop-section", "LoRA config (JSON)"));
+
+            // Help text in a collapsible accordion; open/closed is remembered.
+            const help = el("details", "mll-pop-help");
+            help.open = !!prefs.json_help_open;
+            help.addEventListener("toggle", () => {
+                prefs.json_help_open = help.open;
+                savePrefs();
+            });
+            help.append(el("summary", "", "How to use / what the fields mean"));
+
+            const helpBody = el("div", "mll-pop-help-body");
+            helpBody.append(el("div", "mll-pop-text",
+                "Every row of this node, one LoRA per line. Copy it to share or "
+                + "back up a stack, or edit / paste a config here and press Apply "
+                + "(Ctrl+Enter). Missing values default to 1.0."));
+
+            const keys = el("div", "mll-pop-keys");
+            const keyDocs = [
+                ["on", "true / false \u2014 whether the row is applied"],
+                ["lora", "file path inside models/loras, as shown in the picker (\"None\" = empty slot)"],
+                ["label", "makes a \"None\" row a divider with this heading (\"\" = plain line)"],
+                ["str", "model strength"],
+                ["clip", "CLIP strength (used when Separate CLIP strength is on; follows str while it's off)"],
+                ["vid  v2a  aud  a2v  other", "LTX layer multipliers on str: video, video\u2192audio, audio, audio\u2192video, everything else (used in LTX mode)"],
+            ];
+            for (const [term, detail] of keyDocs) {
+                keys.append(el("span", "term", term), el("span", "detail", detail));
+            }
+            helpBody.append(keys);
+            help.append(helpBody);
+            body.append(help);
+
+            const data = JSON.parse(node.properties.lora_data || "[]");
+            appliedText = formatConfig(data);
+            textarea = el("textarea", "mll-pop-json");
+            textarea.spellcheck = false;
+            textarea.value = appliedText;
+            textarea.rows = Math.min(Math.max(data.length + 2, 4), 16);
+            body.append(textarea);
+
+            const status = el("div", "mll-pop-status");
+            body.append(status);
+
+            /** Shows the node's stored config (as synced to the backend) */
+            refreshJson = () => {
+                appliedText = formatConfig(JSON.parse(node.properties.lora_data || "[]"));
+                textarea.value = appliedText;
+            };
+
+            const setStatus = (text, kind) => {
+                status.textContent = text;
+                status.className = "mll-pop-status" + (kind ? " " + kind : "");
+                textarea.classList.toggle("invalid", kind === "error");
+            };
+
+            /** Applies the textarea; returns false (and shows why) on error. */
+            const applyJson = () => {
+                let sanitized;
+                try {
+                    sanitized = sanitizeConfig(JSON.parse(textarea.value));
+                } catch (err) {
+                    setStatus(err instanceof SyntaxError ? "Invalid JSON: " + err.message : err.message, "error");
+                    return false;
+                }
+                node.properties.lora_data = JSON.stringify(sanitized);
+                syncToBackend(node);
+                resizeNode(node);
+                renderRows(node, rowsContainer, nodeData);
+                refreshJson();
+                const n = sanitized.length;
+                setStatus(`Applied ${n} row${n === 1 ? "" : "s"}.`, "ok");
+                return true;
+            };
+
+            textarea.addEventListener("input", () => {
+                setStatus(textarea.value !== appliedText ? "Unapplied changes" : "", "");
+            });
+            textarea.addEventListener("keydown", (e) => {
+                // Keep typing out of ComfyUI's shortcuts (Ctrl+Enter would queue).
+                e.stopPropagation();
+                if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault();
+                    applyJson();
+                } else if (e.key === "Tab" && !e.shiftKey) {
+                    e.preventDefault();
+                    textarea.setRangeText("  ", textarea.selectionStart, textarea.selectionEnd, "end");
+                }
+            });
+            textarea.addEventListener("keyup", (e) => e.stopPropagation());
+
+            // ── Foot ──
+            const foot = el("div", "mll-pop-foot");
+            const copyBtn = el("button", "mll-pop-btn", "Copy");
+            copyBtn.type = "button";
+            copyBtn.title = "Copy the JSON to the clipboard";
+            copyBtn.addEventListener("click", async () => {
+                try {
+                    await navigator.clipboard.writeText(textarea.value);
+                    setStatus("Copied to clipboard.", "ok");
+                } catch {
+                    textarea.select();
+                    setStatus("Clipboard blocked \u2014 text selected, press Ctrl+C.", "");
+                }
+            });
+            const applyBtn = el("button", "mll-pop-btn", "Apply");
+            applyBtn.type = "button";
+            applyBtn.title = "Apply the JSON to this node (Ctrl+Enter)";
+            applyBtn.addEventListener("click", applyJson);
+            const doneBtn = el("button", "mll-pop-btn primary", "Done");
+            doneBtn.type = "button";
+            doneBtn.title = "Apply any JSON changes and close";
+            doneBtn.addEventListener("click", () => {
+                if (textarea.value !== appliedText && !applyJson()) return;
+                closeConfigPopup();
+            });
+            foot.append(copyBtn, el("span", "spacer"), applyBtn, doneBtn);
+
+            pop.append(head, body, foot);
+            document.body.append(pop);
+
+            // ── Position next to the cog, flipping above if needed ──
+            const anchor = anchorEl.getBoundingClientRect();
+            const place = () => {
+                const rect = pop.getBoundingClientRect();
+                const left = Math.min(anchor.left, window.innerWidth - rect.width - 8);
+                let top = anchor.bottom + 4;
+                if (top + rect.height > window.innerHeight - 8) {
+                    top = Math.max(8, anchor.top - rect.height - 4);
+                }
+                pop.style.left = `${Math.max(8, left)}px`;
+                pop.style.top = `${top}px`;
+            };
+            place();
+            requestAnimationFrame(place);
+
+            // Outside click / Escape close it (unapplied JSON edits are dropped).
+            const abort = new AbortController();
+            document.addEventListener("pointerdown", (e) => {
+                if (pop.contains(e.target)) return;
+                // This node's cog toggles the popup itself (the header, and
+                // so the cog, is rebuilt when a column mode changes).
+                if (headerEl.contains(e.target) && e.target.closest?.(".mll-cog-btn")) return;
+                closeConfigPopup();
+            }, { capture: true, signal: abort.signal });
+            window.addEventListener("keydown", (e) => {
+                if (e.key === "Escape") {
+                    e.stopPropagation();
+                    closeConfigPopup();
+                }
+            }, { capture: true, signal: abort.signal });
+            pop.addEventListener("wheel", (e) => e.stopPropagation());
+
+            _activePopup = { element: pop, abort, node };
+        };
+
+        /**
+         * Rebuilds the header content (cog button and column labels).
+         * Called on initial render and when a column mode changes.
          *
          * @param {LGraphNode}  node
          * @param {HTMLElement}  headerEl      - The .mll-header div
@@ -787,95 +1486,21 @@ app.registerExtension({
         const renderHeader = (node, headerEl, nodeData, rowsContainer) => {
             headerEl.innerHTML = "";
 
-            // Config editor button (⚙) — first in the header
+            // Settings button (⚙) — first in the header
             const cogBtn = document.createElement("span");
             cogBtn.className = "mll-cog-btn";
             cogBtn.textContent = "\u2699";
-            cogBtn.title = "Edit LoRA config JSON";
+            cogBtn.title = "Settings: CLIP / LTX columns and LoRA config JSON";
+            cogBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
             cogBtn.addEventListener("click", (e) => {
                 e.stopPropagation();
-                const data = JSON.parse(node.properties.lora_data || "[]");
-                const compactJson = JSON.stringify(data);
-                showPrompt("LoRA Config (JSON)", compactJson, (value) => {
-                    try {
-                        const parsed = JSON.parse(value);
-                        if (!Array.isArray(parsed)) {
-                            console.warn("[MultiLoRA] Invalid config: not an array");
-                            return;
-                        }
-                        const sanitized = parsed.map(row => ({
-                            on:    row.on !== undefined ? row.on : true,
-                            lora:  row.lora || "None",
-                            str:   row.str !== undefined ? parseFloat(row.str) : 1.0,
-                            clip:  row.clip !== undefined ? parseFloat(row.clip) : 1.0,
-                            vid:   row.vid !== undefined ? parseFloat(row.vid) : 1.0,
-                            v2a:   row.v2a !== undefined ? parseFloat(row.v2a) : 1.0,
-                            aud:   row.aud !== undefined ? parseFloat(row.aud) : 1.0,
-                            a2v:   row.a2v !== undefined ? parseFloat(row.a2v) : 1.0,
-                            other: row.other !== undefined ? parseFloat(row.other) : 1.0,
-                        }));
-                        node.properties.lora_data = JSON.stringify(sanitized);
-                        syncToBackend(node);
-                        resizeNode(node);
-                        renderRows(node, rowsContainer, nodeData);
-                    } catch (err) {
-                        console.warn("[MultiLoRA] Invalid JSON, ignoring:", err);
-                    }
-                }, e);
+                if (_activePopup?.node === node) {
+                    closeConfigPopup();
+                    return;
+                }
+                openConfigPopup(node, cogBtn, headerEl, nodeData, rowsContainer);
             });
             headerEl.appendChild(cogBtn);
-
-            // LTX mode toggle — after cog, before spacer
-            const ltxToggle = document.createElement("label");
-            ltxToggle.className = "mll-ltx-toggle";
-            if (getLtxMode(node)) ltxToggle.classList.add("mll-ltx-active");
-
-            const ltxCheckbox = document.createElement("input");
-            ltxCheckbox.type = "checkbox";
-            ltxCheckbox.checked = getLtxMode(node);
-            ltxCheckbox.addEventListener("change", (e) => {
-                e.stopPropagation();
-                const checked = ltxCheckbox.checked;
-                setLtxMode(node, checked);
-                // Rebuild header (to show/hide column labels) and rows
-                renderHeader(node, headerEl, nodeData, rowsContainer);
-                renderRows(node, rowsContainer, nodeData);
-                resizeNode(node);
-            });
-            // Stop pointer events from bubbling to prevent LiteGraph/Vue interference
-            ltxCheckbox.addEventListener("pointerdown", (e) => e.stopPropagation());
-
-            const ltxLabel = document.createElement("span");
-            ltxLabel.textContent = "LTX";
-
-            ltxToggle.appendChild(ltxCheckbox);
-            ltxToggle.appendChild(ltxLabel);
-            headerEl.appendChild(ltxToggle);
-
-            // CLIP mode toggle — adds a per-row CLIP strength column
-            const clipToggle = document.createElement("label");
-            clipToggle.className = "mll-ltx-toggle";
-            if (getClipMode(node)) clipToggle.classList.add("mll-ltx-active");
-
-            const clipCheckbox = document.createElement("input");
-            clipCheckbox.type = "checkbox";
-            clipCheckbox.checked = getClipMode(node);
-            clipCheckbox.addEventListener("change", (e) => {
-                e.stopPropagation();
-                setClipMode(node, clipCheckbox.checked);
-                // Rebuild header (to show/hide the CLIP label) and rows
-                renderHeader(node, headerEl, nodeData, rowsContainer);
-                renderRows(node, rowsContainer, nodeData);
-                resizeNode(node);
-            });
-            clipCheckbox.addEventListener("pointerdown", (e) => e.stopPropagation());
-
-            const clipLabel = document.createElement("span");
-            clipLabel.textContent = "CLIP";
-
-            clipToggle.appendChild(clipCheckbox);
-            clipToggle.appendChild(clipLabel);
-            headerEl.appendChild(clipToggle);
 
             // Spacer pushes column labels to the right
             const headerSpacer = document.createElement("span");
@@ -911,16 +1536,7 @@ app.registerExtension({
             const rowEl = document.createElement("div");
             rowEl.className = "mll-row";
 
-            // Apply state classes
             const loraList = availableLoras;
-            if (row.lora === "None") {
-                rowEl.classList.add("mll-none-lora");
-            } else if (!row.on) {
-                rowEl.classList.add("mll-disabled");
-            }
-            if (row.lora !== "None" && !loraList.includes(row.lora)) {
-                rowEl.classList.add("mll-missing-lora");
-            }
 
             // ── Grip handle ──
             const grip = document.createElement("span");
@@ -932,6 +1548,77 @@ app.registerExtension({
                 startDragReorder(e, rowEl, rowIdx, node, rebuildFn);
             });
             rowEl.appendChild(grip);
+
+            // ── Trash (appended last by each row kind) ──
+            const trash = document.createElement("span");
+            trash.className = "mll-trash";
+            trash.textContent = "\u2715";
+            trash.addEventListener("click", (e) => {
+                e.stopPropagation();
+                const data = JSON.parse(node.properties.lora_data || "[]");
+                data.splice(rowIdx, 1);
+                node.properties.lora_data = JSON.stringify(data);
+                syncToBackend(node);
+                resizeNode(node);
+                rebuildFn();
+            });
+
+            /** Applies `mutate` to this row's stored data, then re-renders */
+            const updateRow = (mutate) => {
+                const data = JSON.parse(node.properties.lora_data || "[]");
+                if (!data[rowIdx]) return;
+                mutate(data[rowIdx]);
+                node.properties.lora_data = JSON.stringify(data);
+                syncToBackend(node);
+                rebuildFn();
+            };
+
+            /** Prompts for a divider name and stores it as this row's label */
+            const promptDividerName = (e) => {
+                showPrompt("Divider name", isDividerRow(row) ? row.label : "", (v) => {
+                    updateRow(r => { r.label = String(v ?? "").trim(); });
+                }, e);
+            };
+
+            // ── Divider: a labelled line, no dot or strength boxes ──
+            if (isDividerRow(row)) {
+                rowEl.classList.add("mll-divider");
+                const labelEl = document.createElement("span");
+                labelEl.className = "mll-divider-label";
+                labelEl.textContent = row.label;
+                labelEl.title = "Double-click to rename";
+                const line = document.createElement("span");
+                line.className = "mll-divider-line";
+
+                rowEl.addEventListener("dblclick", (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    promptDividerName(e);
+                });
+                rowEl.addEventListener("contextmenu", (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    new LiteGraph.ContextMenu([
+                        { content: "Rename divider\u2026", callback: () => promptDividerName(e) },
+                        { content: "Convert to empty slot", callback: () => updateRow(r => { delete r.label; }) },
+                    ], { event: e, title: row.label || "Divider" });
+                });
+
+                if (row.label) rowEl.appendChild(labelEl);
+                rowEl.appendChild(line);
+                rowEl.appendChild(trash);
+                return rowEl;
+            }
+
+            // Apply state classes
+            if (row.lora === "None") {
+                rowEl.classList.add("mll-none-lora");
+            } else if (!row.on) {
+                rowEl.classList.add("mll-disabled");
+            }
+            if (row.lora !== "None" && !loraList.includes(row.lora)) {
+                rowEl.classList.add("mll-missing-lora");
+            }
 
             // ── Toggle dot ──
             const toggle = document.createElement("span");
@@ -961,13 +1648,21 @@ app.registerExtension({
             // ── LoRA name ──
             const nameEl = document.createElement("span");
             nameEl.className = "mll-name";
-            const displayName = formatLoraName(row.lora);
-            nameEl.innerHTML = "";
+            const isEmpty = row.lora === "None";
             const bdi = document.createElement("bdi");
-            bdi.textContent = displayName;
+            if (isEmpty) {
+                // Empty slot: a placeholder inviting a pick, not a "None" value
+                nameEl.classList.add("mll-empty-slot");
+                nameEl.title = "Click to choose a LoRA \u2014 right-click to make it a divider";
+                bdi.textContent = "Choose a LoRA\u2026";
+            } else {
+                bdi.textContent = formatLoraName(row.lora);
+            }
             nameEl.appendChild(bdi);
             if (row.lora !== "None" && !loraList.includes(row.lora)) {
-                nameEl.title = "LoRA file not found";
+                nameEl.title = "LoRA file not found: " + row.lora;
+            } else if (row.lora !== "None" && prefs.hide_folders) {
+                nameEl.title = row.lora;
             }
 
             // ── Info badge (always shown for real LoRAs) ──
@@ -1037,21 +1732,18 @@ app.registerExtension({
                     event: e,
                     title: "Choose a lora",
                     className: "dark",
-                    callback: (v) => {
-                        const data = JSON.parse(node.properties.lora_data || "[]");
-                        if (data[rowIdx]) {
-                            data[rowIdx].lora = v;
-                            node.properties.lora_data = JSON.stringify(data);
-                            syncToBackend(node);
-                            rebuildFn();
-                        }
-                    }
+                    callback: (v) => updateRow(r => { r.lora = v; }),
                 });
             });
             nameEl.addEventListener("contextmenu", (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                if (row.lora && row.lora !== "None") {
+                if (isEmpty) {
+                    new LiteGraph.ContextMenu(
+                        [{ content: "Make divider\u2026", callback: () => promptDividerName(e) }],
+                        { event: e, title: "Empty slot" }
+                    );
+                } else if (row.lora) {
                     new LiteGraph.ContextMenu(
                         [{ content: "Show LoRA Info", callback: openInfoDialog }],
                         { event: e, title: formatLoraName(row.lora) }
@@ -1060,8 +1752,8 @@ app.registerExtension({
             });
             rowEl.appendChild(nameEl);
 
-            // ── Number cells — only visible columns ──
-            const visibleDefs = getVisibleNumDefs(node);
+            // ── Number cells — only visible columns (none on empty slots) ──
+            const visibleDefs = isEmpty ? [] : getVisibleNumDefs(node);
             for (const numDef of visibleDefs) {
                 const numEl = document.createElement("span");
                 numEl.className = "mll-num";
@@ -1079,19 +1771,6 @@ app.registerExtension({
                 rowEl.appendChild(numEl);
             }
 
-            // ── Trash ──
-            const trash = document.createElement("span");
-            trash.className = "mll-trash";
-            trash.textContent = "\u2715";
-            trash.addEventListener("click", (e) => {
-                e.stopPropagation();
-                const data = JSON.parse(node.properties.lora_data || "[]");
-                data.splice(rowIdx, 1);
-                node.properties.lora_data = JSON.stringify(data);
-                syncToBackend(node);
-                resizeNode(node);
-                rebuildFn();
-            });
             rowEl.appendChild(trash);
 
             return rowEl;
@@ -1137,22 +1816,35 @@ app.registerExtension({
                 e.preventDefault();
                 e.stopPropagation();
 
-                const startX = e.clientX;
                 const data = JSON.parse(node.properties.lora_data || "[]");
                 if (!data[rowIdx]) return;
                 const startVal = data[rowIdx][key];
+                // Scrub origin; re-based whenever Shift changes so switching
+                // between coarse and fine mid-drag never jumps the value.
+                let originX = e.clientX;
+                let originVal = startVal;
+                let originFine = e.shiftKey;
+                let lastVal = startVal;
                 let moved = false;
 
                 numEl.setPointerCapture(e.pointerId);
 
                 const onMove = (me) => {
-                    const deltaX = me.clientX - startX;
-                    if (Math.abs(deltaX) > 2) {
+                    if (!moved && Math.abs(me.clientX - originX) > SCRUB_DEAD_ZONE) {
                         moved = true;
+                        originX += Math.sign(me.clientX - originX) * SCRUB_DEAD_ZONE;
                     }
                     if (moved) {
-                        let newVal = startVal + (deltaX * 0.01);
-                        newVal = Math.round(newVal * 100) / 100;
+                        if (me.shiftKey !== originFine) {
+                            originX = me.clientX;
+                            originVal = lastVal;
+                            originFine = me.shiftKey;
+                        }
+                        const step = originFine ? FINE_STEP : getStep();
+                        const steps = Math.round((me.clientX - originX) / SCRUB_PIXELS_PER_STEP);
+                        const newVal = Math.round((originVal + steps * step) * 100) / 100;
+                        if (newVal === lastVal) return;
+                        lastVal = newVal;
                         numEl.textContent = newVal.toFixed(2);
                         const curData = JSON.parse(node.properties.lora_data || "[]");
                         if (curData[rowIdx]) {
@@ -1171,7 +1863,7 @@ app.registerExtension({
                     if (!moved) {
                         const curData = JSON.parse(node.properties.lora_data || "[]");
                         const currentVal = curData[rowIdx]?.[key] ?? startVal;
-                        showPrompt("Value", currentVal, (v) => {
+                        const dialog = showPrompt("Value", currentVal, (v) => {
                             const parsed = parseFloat(v);
                             if (!isNaN(parsed)) {
                                 const freshData = JSON.parse(node.properties.lora_data || "[]");
@@ -1183,6 +1875,18 @@ app.registerExtension({
                                 }
                             }
                         }, ue);
+                        // ArrowUp / ArrowDown step the typed value (Shift = fine).
+                        const input = dialog?.querySelector("input");
+                        input?.addEventListener("keydown", (ke) => {
+                            if (ke.key !== "ArrowUp" && ke.key !== "ArrowDown") return;
+                            ke.preventDefault();
+                            ke.stopPropagation();
+                            const base = parseFloat(input.value);
+                            const step = (ke.shiftKey ? FINE_STEP : getStep()) * (ke.key === "ArrowUp" ? 1 : -1);
+                            const next = Math.round(((isNaN(base) ? currentVal : base) + step) * 100) / 100;
+                            input.value = next.toFixed(2);
+                            input.select();
+                        });
                     }
                 };
 
@@ -1404,20 +2108,40 @@ app.registerExtension({
             rowsContainer.className = "mll-rows";
             container.appendChild(rowsContainer);
 
-            // ── "+ Add LoRA" button ──
+            // ── "+ Add LoRA" / "+ Divider" buttons ──
+            const appendRow = (row) => {
+                const data = JSON.parse(nodeRef.properties.lora_data || "[]");
+                data.push(row);
+                nodeRef.properties.lora_data = JSON.stringify(data);
+                syncToBackend(nodeRef);
+                resizeNode(nodeRef);
+                renderRows(nodeRef, rowsContainer, nodeData);
+            };
+
+            const addBar = document.createElement("div");
+            addBar.className = "mll-add-bar";
+
             const addBtn = document.createElement("button");
             addBtn.className = "mll-add-btn";
             addBtn.textContent = "+ Add LoRA";
             addBtn.addEventListener("click", (e) => {
                 e.stopPropagation();
-                const data = JSON.parse(nodeRef.properties.lora_data || "[]");
-                data.push(makeEmptyRow());
-                nodeRef.properties.lora_data = JSON.stringify(data);
-                syncToBackend(nodeRef);
-                resizeNode(nodeRef);
-                renderRows(nodeRef, rowsContainer, nodeData);
+                appendRow(makeEmptyRow());
             });
-            container.appendChild(addBtn);
+
+            const addDividerBtn = document.createElement("button");
+            addDividerBtn.className = "mll-add-btn mll-add-divider";
+            addDividerBtn.textContent = "+ Divider";
+            addDividerBtn.title = "Add a labelled divider to group LoRAs";
+            addDividerBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                showPrompt("Divider name", "", (v) => {
+                    appendRow({ ...makeEmptyRow(), label: String(v ?? "").trim() });
+                }, e);
+            });
+
+            addBar.append(addBtn, addDividerBtn);
+            container.appendChild(addBar);
 
             // ── Initial render ──
             renderHeader(this, header, nodeData, rowsContainer);
@@ -1428,6 +2152,7 @@ app.registerExtension({
             this._mllRowsContainer = rowsContainer;
             this._mllHeader = header;
             this._mllNodeData = nodeData;
+            _liveNodes.add(this);
 
             // ── Public API for external nodes (e.g. MultiLoRA Cycle) ──
             this.updateLoraData = (newData) => {
@@ -1457,6 +2182,13 @@ app.registerExtension({
                 this.setSize([Math.max(sz[0], this.size?.[0] || 0), sz[1]]);
                 this.setDirtyCanvas(true, true);
             });
+        };
+
+        const origOnRemoved = nodeType.prototype.onRemoved;
+        nodeType.prototype.onRemoved = function () {
+            _liveNodes.delete(this);
+            if (_activePopup?.node === this) closeConfigPopup();
+            return origOnRemoved?.apply(this, arguments);
         };
 
         // ─────────────────────────────────────────────

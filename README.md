@@ -11,8 +11,8 @@ A powerful multi-LoRA management node for ComfyUI with optional LTX2 layer-speci
 - **Multi-LoRA Support**: Load and apply multiple LoRAs simultaneously with individual strength controls
 - **Two Modes**:
   - **Standard mode**: Single strength value per LoRA, applied uniformly via ComfyUI's built-in loader
-  - **LTX mode**: Per-layer strength control for LTX2 video/audio models (enable via the LTX checkbox)
-- **Independent CLIP Strength**: Enable the **CLIP** checkbox to add a per-LoRA CLIP strength column (right after STR), letting you scale CLIP separately from the model. When off, the STR value is used for both model and CLIP (previous behaviour)
+  - **LTX mode**: Per-layer strength control for LTX2 video/audio models (enable in the cog settings)
+- **Independent CLIP Strength**: Enable **Separate CLIP strength** in the cog settings to add a per-LoRA CLIP strength column (right after STR), letting you scale CLIP separately from the model. When off, the STR value is used for both model and CLIP (previous behaviour)
 - **LTX Layer Controls** (when LTX mode is enabled):
   - **STR** (Strength Model): Overall model strength
   - **Vid** (Video): Video attention layers
@@ -20,14 +20,15 @@ A powerful multi-LoRA management node for ComfyUI with optional LTX2 layer-speci
   - **Aud** (Audio): Audio-specific layers
   - **A2V** (Audio-to-Video): Cross-modal attention (audio to video)
   - **Other**: Remaining network components
+- **Dividers**: Labelled heading rows to split a long list into groups. They're stored as `"None"` rows with a `label`, so they're never loaded or cycled
 - **Intuitive UI**: Drag-and-drop row reordering, toggle enable/disable, click-to-edit or drag-to-slide values
-- **Drag-and-Drop File Import**: Drop LoRA files onto the node to quickly add them — matches by filename against your existing LoRA library
+- **Drag-and-Drop File Import**: Drop LoRA files onto the node to quickly add them — matches by filename against your existing LoRA library; new rows start at the default strength
 - **LoRA Rank Display**: Each LoRA shows its rank (e.g. `(r16)`) next to its name, read from the file header and cached, so you can spot high-rank LoRAs that may not play well with a given model. See [LoRA Rank](#lora-rank)
 - **Missing LoRA Detection**: LoRAs that no longer exist on disk are shown with red strikethrough text on session load, so you can spot moved or deleted files at a glance
 - **rgthree LoRA Info Integration**: Right-click any LoRA name to open the rgthree LoRA info dialog (requires [rgthree-comfy](https://github.com/rgthree/rgthree-comfy)). LoRAs with fetched info display a circled info badge next to their name (green for Civitai data, gray for local info). Fetching new info from Civitai in the dialog updates the badge immediately on close
 - **Optional Model/CLIP Input**: Use as a standalone LoRA manager even without model or CLIP connected
 - **JSON Output**: Export a rich JSON structure of all selected LoRAs for external processing
-- **Raw Config Editor**: Click the cog button to copy/paste the entire LoRA configuration as JSON
+- **Settings Popup**: The cog button opens the node's settings — CLIP / LTX column modes, default strength for new LoRAs (0.8), strength step, hiding folder names, and a JSON editor to copy/paste the entire LoRA configuration
 - **Sidecar Metadata Support**: Automatically loads metadata from `.json` sidecar files alongside LoRA weights
 - **MultiLoRA Cycle** (companion node): Automatically iterate through LoRAs at multiple strengths for batch testing — ideal for evaluating training checkpoints
 - **Parse JSON** (companion node): Convert the `lora_data` JSON output into a Python object for use with scripting nodes like [rgthree](https://github.com/rgthree/rgthree-comfy)'s Power Puter
@@ -50,24 +51,22 @@ A powerful multi-LoRA management node for ComfyUI with optional LTX2 layer-speci
 
 1. Add a **Multi LoRA Loader** node
 2. Connect model and/or CLIP inputs (both optional)
-3. Click **+ Add LoRA** to add rows
+3. Click **+ Add LoRA** to add rows (and **+ Divider** to add headings that group them)
 4. Click the LoRA name field to open a menu of available LoRAs
 5. Adjust strength values by:
-   - **Dragging** left/right for fine control
-   - **Single clicking** to type an exact value
+   - **Dragging** left/right, in steps of the configured strength step (default 0.05; hold Shift for 0.01)
+   - **Single clicking** to type an exact value (ArrowUp/ArrowDown step it; Shift for 0.01)
 6. Toggle the dot on/off to enable/disable individual LoRAs
 7. Drag rows by the grip handle to reorder
 8. Click the X to delete a row
-9. Enable the **LTX** checkbox to show per-layer strength columns
-10. Enable the **CLIP** checkbox to show a separate CLIP strength column
+9. Open the cog settings and enable **LTX per-layer strengths** to show per-layer strength columns
+10. Open the cog settings and enable **Separate CLIP strength** to show a separate CLIP strength column
 
 ### UI Elements
 
 | Element | Action | Purpose |
 |---------|--------|---------|
-| **LTX** (Checkbox) | Click | Toggle LTX per-layer mode on/off |
-| **CLIP** (Checkbox) | Click | Toggle a separate per-LoRA CLIP strength column on/off |
-| **Cog** | Click | Open raw JSON editor for copy/paste/sharing |
+| **Cog** | Click | Open settings: CLIP / LTX column modes, default strength for new LoRAs (0.8), strength step, hide folder names, and the config JSON editor |
 | **Grip** | Drag vertically | Reorder LoRA rows |
 | **Dot** (Toggle) | Click | Enable/disable the LoRA |
 | **LoRA Name** | Left-click | Open LoRA selection menu |
@@ -75,9 +74,10 @@ A powerful multi-LoRA management node for ComfyUI with optional LTX2 layer-speci
 | **Rank** `(r16)` | Hover | LoRA rank (hover for details, incl. alpha when stored) |
 | **Info badge** | — | Indicates fetched LoRA info (green = Civitai, gray = local) |
 | **~~Strikethrough~~** | — | LoRA file not found on disk (hover for tooltip) |
-| **STR / CLIP / Vid / V2A / Aud / A2V / Other** | Drag or click | Adjust strengths (CLIP shown when the CLIP checkbox is enabled) |
+| **STR / CLIP / Vid / V2A / Aud / A2V / Other** | Drag or click | Adjust strengths (CLIP shown when Separate CLIP strength is enabled) |
 | **X** (Trash) | Click | Delete the row |
-| **+ Add LoRA** | Click | Add a new empty row |
+| **+ Add LoRA** | Click | Add a new empty slot (click its *Choose a LoRA…* box to pick one; right-click to make it a divider) |
+| **+ Divider** | Click | Add a labelled divider to group LoRAs. Double-click a divider to rename it; right-click to rename or turn it back into an empty slot |
 | **Drop zone** | Drop files | Drop LoRA files to add by filename match (files must already be in your loras directory) |
 
 > **Note on drag-and-drop:** No files are copied — this is a shortcut for selecting LoRAs from the menu. Dropped files are matched by filename (case-insensitive) against LoRAs already in your ComfyUI `models/loras` directory. If a file isn't found, an alert lists the unmatched filenames. For a LoRA you only just copied into that directory, press `R` first so ComfyUI picks it up.
@@ -91,7 +91,7 @@ A powerful multi-LoRA management node for ComfyUI with optional LTX2 layer-speci
 
 **Outputs**:
 - **model**: The input model with all active LoRAs applied
-- **clip**: The input CLIP with LoRAs applied (standard mode only; LTX mode passes CLIP through unchanged). With the CLIP checkbox enabled, each LoRA's CLIP strength comes from its own CLIP column instead of reusing STR
+- **clip**: The input CLIP with LoRAs applied (standard mode only; LTX mode passes CLIP through unchanged). With Separate CLIP strength enabled, each LoRA's CLIP strength comes from its own CLIP column instead of reusing STR
 - **lora_data**: JSON string containing metadata for all selected LoRAs (enabled and disabled)
 
 ### rgthree Integration
@@ -147,7 +147,7 @@ The `lora_data` output includes all LoRAs with selected weights:
 ]
 ```
 
-> `strength_clip` is only present when the CLIP checkbox is enabled; the LTX layer keys (`video`, `audio`, etc.) are only present in LTX mode.
+> `strength_clip` is only present when Separate CLIP strength is enabled; the LTX layer keys (`video`, `audio`, etc.) are only present in LTX mode.
 
 ## Sharing and Batch Editing
 
@@ -156,17 +156,17 @@ The `lora_data` output includes all LoRAs with selected weights:
 The easiest way to share or batch-edit your LoRA configuration:
 
 1. Click the cog button in the header of the node
-2. Copy the compact JSON from the dialog
-3. Edit it in your text editor
-4. Paste the edited JSON back and press Enter
-5. Invalid JSON is ignored and the config stays unchanged
+2. The **LoRA config (JSON)** box shows every row, one LoRA per line — click **Copy** to put it on the clipboard
+3. Edit it in place (or paste an edited config back in)
+4. Press **Apply** (or Ctrl+Enter); **Done** also applies any pending edit before closing
+5. Invalid JSON is reported under the box and the config stays unchanged
 
 **Example config:**
 ```json
 [{"on":true,"lora":"style_lora.safetensors","str":1.0,"clip":1.0,"vid":0.8,"v2a":1.0,"aud":0.5,"a2v":1.0,"other":1.0},{"on":false,"lora":"face_detail.safetensors","str":0.7,"clip":0.7,"vid":1.0,"v2a":1.0,"aud":1.0,"a2v":1.0,"other":1.0}]
 ```
 
-> The `clip` key holds each row's CLIP strength; it's only applied when the CLIP checkbox is enabled (otherwise `str` is used for CLIP too).
+> The `clip` key holds each row's CLIP strength; it's only applied when Separate CLIP strength is enabled (otherwise `str` is used for CLIP too, and `clip` is kept equal to `str`, so switching the CLIP column on starts each row's CLIP at its STR).
 
 ### Workflow JSON Editing
 
@@ -272,7 +272,7 @@ This node was previously called **Power LTX LoRA Loader Extra**. If you load an 
 2. Copy the JSON data from the text box
 3. Add a new **Multi LoRA Loader** node
 4. Click the cog button on the new node and paste the data in
-5. Enable the **LTX** checkbox if your workflow used LTX layer-specific strengths
+5. Enable **LTX per-layer strengths** in the cog settings if your workflow used LTX layer-specific strengths
 6. Delete the old deprecated node
 
 ## Troubleshooting
